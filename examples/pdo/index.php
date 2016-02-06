@@ -45,6 +45,7 @@ $pdo->exec("create table if not exists users (id integer primary key, name varch
 $pdo->exec("create table if not exists registrations (id integer primary key, user_id integer, keyHandle varchar(255), publicKey varchar(255), certificate text, counter integer)");
 
 $scheme = isset($_SERVER['HTTPS']) ? "https://" : "http://";
+$scheme = 'https://'; // u2f doesnt work on http ever, and this allows flexible cloudflare ssl
 $u2f = new u2flib_server\U2F($scheme . $_SERVER['HTTP_HOST']);
 
 session_start();
@@ -82,6 +83,47 @@ function updateReg($reg) {
     $upd->execute(array($reg->counter, $reg->id));
 }
 
+function buildPressKeyToRegisterJS($u2f, $user) {
+    list($req, $sigs) = $u2f->getRegisterData(getRegs($user->id));
+    $json_request = json_encode($req);
+    $json_sigs = json_encode($sigs);
+    $username = json_encode($user->name);
+
+    $out = <<<JAVASCRIPT
+
+var request = $json_request;
+var existing_signatures = $json_sigs;
+var username = $username;
+u2f.register([request], existing_signatures, function(signature) {
+    document.getElementById('username').value = username;
+    document.getElementById('request_to_sign').value = JSON.stringify(request);
+    document.getElementById('register2').value = JSON.stringify(signature);
+    // submit
+});
+
+JAVASCRIPT;
+    return $out;
+}
+
+function buildPressKeyToAuthenticateJS($u2f, $user) {
+    $request_data = $u2f->getAuthenticateData(getRegs($user->id));
+    $json_request = json_encode($request_data);
+    $username = json_encode($user->name);
+
+$out = <<<JAVASCRIPT
+
+var request = $json_request;
+var username = $username;
+u2f.sign(request, function(signature) {
+    document.getElementById('username').value = username;
+    document.getElementById('request_to_sign').value = JSON.stringify(request);
+    document.getElementById('authenticate2').value = JSON.stringify(signature);
+    // submit
+});
+JAVASCRIPT;
+    return $out;
+}
+
 ?>
 
 <html>
@@ -105,69 +147,26 @@ function updateReg($reg) {
               switch($_POST['action']):
                 case 'register':
                   try {
-                    $data = $u2f->getRegisterData(getRegs($user->id));
-
-                    list($req,$sigs) = $data;
-                    $_SESSION['regReq'] = json_encode($req);
-                    echo "var req = " . json_encode($req) . ";";
-                    echo "var sigs = " . json_encode($sigs) . ";";
-                    echo "var username = '" . $user->name . "';";
-        ?>
-        setTimeout(function() {
-            console.log("Register: ", req);
-            u2f.register([req], sigs, function(data) {
-                var form = document.getElementById('form');
-                var reg = document.getElementById('register2');
-                var user = document.getElementById('username');
-                console.log("Register callback", data);
-                if(data.errorCode) {
-                    alert("registration failed with errror: " + data.errorCode);
-                    return;
-                }
-                reg.value = JSON.stringify(data);
-                user.value = username;
-                form.submit();
-            });
-        }, 1000);
-        <?php
+                    echo buildPressKeyToRegisterJS($u2f, $user);
                   } catch( Exception $e ) {
                     echo "alert('error: " . $e->getMessage() . "');";
                   }
-
                   break;
 
                 case 'authenticate':
                   try {
-                    $reqs = json_encode($u2f->getAuthenticateData(getRegs($user->id)));
-
-                    $_SESSION['authReq'] = $reqs;
-                    echo "var req = $reqs;";
-                    echo "var username = '" . $user->name . "';";
-        ?>
-        setTimeout(function() {
-            console.log("sign: ", req);
-            u2f.sign(req, function(data) {
-                var form = document.getElementById('form');
-                var auth = document.getElementById('authenticate2');
-                var user = document.getElementById('username');
-                console.log("Authenticate callback", data);
-                auth.value=JSON.stringify(data);
-                user.value = username;
-                form.submit();
-            });
-        }, 1000);
-        <?php
+                    echo buildPressKeyToAuthenticateJS($u2f, $user);
                   } catch( Exception $e ) {
                     echo "alert('error: " . $e->getMessage() . "');";
                   }
-
                   break;
 
               endswitch;
             } else if($_POST['register2']) {
               try {
-                $reg = $u2f->doRegister(json_decode($_SESSION['regReq']), json_decode($_POST['register2']));
+                $reg = $u2f->doRegister(json_decode($_POST['request_to_sign']), json_decode($_POST['register2']));
                 addReg($user->id, $reg);
+                echo 'alert("registration successful");';
               } catch( Exception $e ) {
                 echo "alert('error: " . $e->getMessage() . "');";
               } finally {
@@ -175,7 +174,8 @@ function updateReg($reg) {
               }
             } else if($_POST['authenticate2']) {
               try {
-                $reg = $u2f->doAuthenticate(json_decode($_SESSION['authReq']), getRegs($user->id), json_decode($_POST['authenticate2']));
+//                $reg = $u2f->doAuthenticate(json_decode($_SESSION['authReq']), getRegs($user->id), json_decode($_POST['authenticate2']));
+                $reg = $u2f->doAuthenticate(json_decode($_POST['request_to_sign']), getRegs($user->id), json_decode($_POST['authenticate2']));
                 updateReg($reg);
                 echo "alert('success: " . $reg->counter . "');";
               } catch( Exception $e ) {
@@ -195,8 +195,12 @@ function updateReg($reg) {
     username: <input name="username" id="username"/><br/>
     register: <input value="register" name="action" type="radio"/><br/>
     authenticate: <input value="authenticate" name="action" type="radio"/><br/>
-    <input type="hidden" name="register2" id="register2"/>
-    <input type="hidden" name="authenticate2" id="authenticate2"/>
+    <br />
+    <br />
+    <br />
+    req2sign: <textarea name="request_to_sign" id="request_to_sign"></textarea><br />
+    reg2/h: <textarea name="register2" id="register2"></textarea><br />
+    auth2/h: <textarea name="authenticate2" id="authenticate2"></textarea><br />
     <button type="submit">Submit!</button>
 </form>
 
