@@ -1,6 +1,6 @@
 <?php
 ini_set('display_errors', true);
-require_once '../src/u2flib_server/U2F.php';
+require_once 'u2f.php';
 
 $pdo = new PDO("sqlite:/home/sites/u2f.ericstern.com/reg.sqlite");
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -9,6 +9,7 @@ $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_OBJ);
 $pdo->exec("create table if not exists users (id integer primary key, name varchar(255))");
 $pdo->exec("create table if not exists registrations (id integer primary key, user_id integer, keyHandle varchar(255), publicKey varchar(255), certificate text, counter integer)");
 
+use u2flib_server\RegistrationInterface;
 
 class User {
     private $db;
@@ -25,72 +26,65 @@ class User {
         $regs = $select->fetchAll();
         $out = [];
         foreach ($regs as $reg) {
-            $out[] = (new UserRegistration($this->db))->_load($reg);
+            $out[] = (new UserRegistration())->setPDO($this->db)->_load($reg);
         }
         return $out;
     }
-    private function addRegistration(UserRegistration $reg) {
+    private function addRegistration(RegistrationInterface $reg) {
         $ins = $this->db->prepare("INSERT INTO registrations (user_id, keyHandle, publicKey, certificate, counter) VALUES (?, ?, ?, ?, ?)");
-        $ins->execute([$this->id, $reg->keyHandle, $reg->publicKey, $reg->certificate, $reg->counter]);
+        $ins->execute([
+            $this->id,
+            $reg->getKeyHandle(),
+            $reg->getPublicKey(),
+            $reg->getCertificate(),
+            $reg->getCounter()
+        ]);
         return true;
     }
 
+    // throws if there is a bad signature
     public function registerSignature($u2f, $request, $signature) {
         $reg = $u2f->doRegister($request, $signature);
-        $regO = new UserRegistration($this->db);
-        $regO->certificate = $reg->certificate;
-        $regO->setCounter($reg->counter);
-        $regO->keyHandle = $reg->keyHandle;
-        $regO->publicKey = $reg->publicKey;
-        $this->addRegistration($regO);
+        $this->addRegistration($reg);
     }
 
 
     public function authenticateSignature($u2f, $request, $signature) {
         $auth = $u2f->doAuthenticate($request, $this->getRegistrations(), $signature);
-        $auth->saveCounter();
     }
 
 }
-class UserRegistration implements JsonSerializable {
+
+class UserRegistration
+    extends u2flib_server\Registration
+//    implements JsonSerializable
+{
+
     private $db;
 
-    public $id;
-    public $user_id;
-    public $keyHandle;
-    public $publicKey;
-    public $certificate;
-    private $counter;
+    private $id;
+    private $user_id;
 
-    public function __construct(PDO $db) {
+    public function setPDO(PDO $db) {
         $this->db = $db;
+        return $this;
     }
     public function _load($data) {
         $this->id = $data->id;
         $this->user_id = $data->user_id;
-        $this->keyHandle = $data->keyHandle;
-        $this->publicKey = $data->publicKey;
-        $this->certificate = $data->certificate;
-        return $this;
+        return $this
+            ->setKeyHandle($data->keyHandle)
+            ->setPublicKey($data->publicKey)
+            ->setCertificate($data->certificate)
+            ->setCounter($data->counter);
     }
 
-    public function __get($k) {
-        if ($k === 'counter') {
-            error_log('__get counter');
-            return $this->counter;
-        }
+    // intercept to persist
+    public function validateCounter($hardware_value) {
+        parent::validateCounter($hardware_value);
+        $this->saveCounter();
     }
-    public function __set($k,$v) {
-        if ($k === 'counter') {
-            $this->counter = $v;
-            error_log('__set counter');
-        }
-    }
-    public function setCounter($c) {
-        $this->counter = $c;
-        return $this;
-    }
-
+/*
     public function jsonSerialize() {
         return [
             'id' => $this->id,
@@ -101,10 +95,11 @@ class UserRegistration implements JsonSerializable {
             'counter' => $this->counter,
         ];
     }
+*/
     // this is not optimal, the stock u2f lib updates the value in place rather than using proper accessors
-    public function saveCounter() {
+    private function saveCounter() {
         $up = $this->db->prepare('UPDATE registrations SET counter=? where id=?');
-        $up->execute([$this->counter, $this->id]);
+        $up->execute([$this->getCounter(), $this->id]);
         return true;
     } 
 }

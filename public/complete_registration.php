@@ -1,5 +1,6 @@
 <?php
 require_once '../common.php';
+// the user needs to come from the active session, not a form, or anyone could attach their key to any other user
 $name = $_POST['username'];
 $uf = new UserFinder($pdo);
 $user = $uf->find($name);

@@ -67,7 +67,7 @@ document.getElementById('reg_form').addEventListener("submit", function(e) {
     e.preventDefault();
     var username = document.getElementById("reg_username").value;
     ajaxPost('/u2f_register_data.php', {"username":username}, function(resp) {
-        document.getElementById('reg_request_to_sign').value = JSON.stringify(resp.request);
+        document.getElementById('reg_request_to_sign').value = JSON.stringify(resp.request) + "\n" + JSON.stringify(resp.signatures);
         showPress();
         u2f.register([resp.request], resp.signatures, function(sig) {
             hidePress();
