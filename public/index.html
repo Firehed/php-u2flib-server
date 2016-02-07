@@ -1,0 +1,39 @@
+<html>
+    <head>
+        <title>Basic U2F setup</title>
+        <script src="/assets/u2f-api.js"></script>
+        <style type="text/css">
+        textarea {
+            display: none;
+        }
+        .debug textarea {
+            display: inline-block;
+        }
+        </style>
+    </head>
+    <body>
+
+        <div id="press" style="display: none">Press your U2F key now</div>
+        <div id="ajax-response"></div>
+        <label>Show debug fields: 
+            <input type="checkbox" id="debug" />
+        </label>
+
+        <form method="POST" id="reg_form">
+            REGISTER username: <input id="reg_username" name="username"/><br/>
+            req2sign: <textarea name="request_str" id="reg_request_to_sign"></textarea><br />
+            sig: <textarea name="signature_str" id="reg_signature"></textarea><br />
+            <button type="submit">Register!</button>
+        </form>
+
+        <form method="POST" id="auth_form">
+            AUTHENTICATE username: <input name="username" id="auth_username"/><br/>
+            req2sign: <textarea name="request_str" id="auth_request_to_sign"></textarea><br />
+            auth2/h: <textarea name="signature_str" id="auth_signature"></textarea><br />
+            <button type="submit">Log In!</button>
+        </form>
+
+        <script src="login.js"></script>
+
+    </body>
+</html>
