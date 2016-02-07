@@ -1,1 +1,0 @@
-../examples/pdo/index.php
